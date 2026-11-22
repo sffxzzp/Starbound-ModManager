@@ -1,0 +1,91 @@
+name: Build and upload release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  windows-and-linux:
+    name: Build Windows x64 and Linux x64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.3'
+          cache: true
+
+      - name: Install MyGo CLI
+        run: go install github.com/egoist/mygo/cmd/mygo@v0.10.0
+
+      - name: Build and upload Windows and Linux packages
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mygo_bin="$(go env GOPATH)/bin/mygo"
+          build_root="$RUNNER_TEMP/starbound-modmanager-build"
+          "$mygo_bin" build -platform windows/amd64,linux/amd64 -skip-installer -o "$build_root"
+
+          safe_tag="${RELEASE_TAG//\//-}"
+          windows_asset="$RUNNER_TEMP/Starbound-ModManager-${safe_tag}-windows-amd64.exe"
+          linux_archive="$(find "$build_root/linux-amd64" -maxdepth 1 -type f -name '*linux-amd64.tar.gz' -print -quit)"
+          linux_deb="$(find "$build_root/linux-amd64" -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$linux_archive"
+          test -n "$linux_deb"
+
+          linux_archive_asset="$RUNNER_TEMP/Starbound-ModManager-${safe_tag}-linux-amd64.tar.gz"
+          linux_deb_asset="$RUNNER_TEMP/Starbound-ModManager-${safe_tag}-linux-amd64.deb"
+          cp "$build_root/windows-amd64/Starbound-ModManager.exe" "$windows_asset"
+          cp "$linux_archive" "$linux_archive_asset"
+          cp "$linux_deb" "$linux_deb_asset"
+
+          gh release upload "$RELEASE_TAG" "$windows_asset" "$linux_archive_asset" "$linux_deb_asset" --clobber
+
+  macos:
+    name: Build macOS universal app
+    runs-on: macos-latest
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.3'
+          cache: true
+
+      - name: Install MyGo CLI
+        run: go install github.com/egoist/mygo/cmd/mygo@v0.10.0
+
+      - name: Build and upload macOS package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mygo_bin="$(go env GOPATH)/bin/mygo"
+          build_root="$RUNNER_TEMP/starbound-modmanager-build"
+          "$mygo_bin" build -platform darwin/universal -skip-installer -o "$build_root"
+
+          macos_dmg="$(find "$build_root/darwin-universal" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          test -n "$macos_dmg"
+
+          safe_tag="${RELEASE_TAG//\//-}"
+          macos_asset="$RUNNER_TEMP/Starbound-ModManager-${safe_tag}-macos-universal.dmg"
+          cp "$macos_dmg" "$macos_asset"
+          gh release upload "$RELEASE_TAG" "$macos_asset" --clobber
